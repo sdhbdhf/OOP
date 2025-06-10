@@ -1,0 +1,757 @@
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.IOException;
+import java.io.InputStream;
+import java.sql.*;
+import java.util.HashMap;
+import java.util.Map;
+
+public class UniEatsCafeSystem {
+    private JFrame frame;
+    private JPanel mainPanel, loginPanel, menuPanel, itemDetailPanel, headerPanel, ordersPanel;
+    private JTextField usernameField;
+    private JPasswordField passwordField;
+    private Map<String, FoodItem> foodItems;
+    private FoodItem currentlySelected;
+    private JLabel userGreetingLabel;
+
+    // Database connection
+    private Connection connection;
+    private final String DB_URL = "jdbc:mysql://localhost:3306/UnieatsDB";
+    private final String DB_USER = "root"; // Change as needed
+    private final String DB_PASSWORD = ""; // Change as needed
+
+    // Color scheme
+    private final Color PRIMARY_COLOR = new Color(255, 165, 0);
+    private final Color SECONDARY_COLOR = new Color(220, 220, 220);
+    private final Color ACCENT_COLOR = new Color(255, 215, 0);
+    private final Color TEXT_COLOR = new Color(50, 50, 50);
+    private final Color BACKGROUND_COLOR = Color.WHITE;
+
+    public UniEatsCafeSystem() {
+        initializeDatabase();
+        initializeFoodItems();
+        createMainFrame();
+        showLoginScreen();
+    }
+
+    private void initializeDatabase() {
+        try {
+            // Load the MySQL JDBC driver
+            Class.forName("com.mysql.cj.jdbc.Driver");
+
+            // Establish connection
+            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+
+            // Create tables if they don't exist
+            Statement stmt = connection.createStatement();
+
+            // Create menu_items table with quantity column
+            stmt.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS menu_items (" +
+                            "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                            "name VARCHAR(100) NOT NULL, " +
+                            "description TEXT, " +
+                            "price DECIMAL(6,2) NOT NULL, " +
+                            "quantity INT DEFAULT 1, " +
+                            "image_path VARCHAR(255), " +
+                            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, " +
+                            "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+            );
+
+            System.out.println("Database initialized successfully");
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(null,
+                    "Database initialization failed: " + e.getMessage(),
+                    "Database Error",
+                    JOptionPane.ERROR_MESSAGE);
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private void initializeFoodItems() {
+        foodItems = new HashMap<>();
+
+        try {
+            // First try to load from database
+            Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT * FROM menu_items");
+
+            while (rs.next()) {
+                String key = rs.getString("name").toLowerCase().replace(" ", "_");
+                FoodItem item = new FoodItem(
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getDouble("price"),
+                        rs.getInt("quantity"),
+                        rs.getString("image_path")
+                );
+                foodItems.put(key, item);
+            }
+
+            // If no items in database, add default items
+            if (foodItems.isEmpty()) {
+                addDefaultMenuItems();
+            }
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(null,
+                    "Failed to load menu items: " + e.getMessage(),
+                    "Database Error",
+                    JOptionPane.ERROR_MESSAGE);
+            addDefaultMenuItems();
+        }
+    }
+
+    private void addDefaultMenuItems() {
+        foodItems.put("burger", new FoodItem("Classic Burger", "Juicy beef patty with lettuce, tomato, and our special sauce served with fries", 12.99, 10, "burger.png"));
+        foodItems.put("pizza", new FoodItem("Margherita Pizza", "Traditional pizza with San Marzano tomato sauce, fresh mozzarella, and basil", 14.99, 8, "pizza.png"));
+        foodItems.put("salad", new FoodItem("Caesar Salad", "Crisp romaine lettuce with homemade Caesar dressing, parmesan, and garlic croutons", 9.99, 15, "salad.png"));
+        foodItems.put("pasta", new FoodItem("Spaghetti Carbonara", "Al dente spaghetti with creamy egg sauce, pancetta, and pecorino cheese", 13.99, 12, "pasta.png"));
+        foodItems.put("dessert", new FoodItem("Chocolate Lava Cake", "Warm chocolate cake with a molten center, served with vanilla ice cream", 7.99, 20, "dessert.png"));
+
+        // Save these to database
+        try {
+            PreparedStatement pstmt = connection.prepareStatement(
+                    "INSERT INTO menu_items (name, description, price, quantity, image_path) VALUES (?, ?, ?, ?, ?)"
+            );
+
+            for (FoodItem item : foodItems.values()) {
+                pstmt.setString(1, item.name);
+                pstmt.setString(2, item.description);
+                pstmt.setDouble(3, item.price);
+                pstmt.setInt(4, item.quantity);
+                pstmt.setString(5, item.imagePath);
+                pstmt.addBatch();
+            }
+
+            pstmt.executeBatch();
+        } catch (SQLException e) {
+            System.err.println("Failed to save default menu items to database: " + e.getMessage());
+        }
+    }
+
+    private void createMainFrame() {
+        frame = new JFrame("UniEats Café");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(1200, 800);
+        frame.setMinimumSize(new Dimension(1000, 700));
+
+        try {
+            Image icon = ImageIO.read(getClass().getResource("Fatman.png"));
+            frame.setIconImage(icon);
+        } catch (IOException | IllegalArgumentException e) {
+            System.out.println("App icon not found: " + e.getMessage());
+        }
+
+        Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+        frame.setLocation((screenSize.width - frame.getWidth()) / 2,
+                (screenSize.height - frame.getHeight()) / 2);
+    }
+
+    private void showLoginScreen() {
+        loginPanel = new JPanel(new BorderLayout());
+        loginPanel.setBackground(BACKGROUND_COLOR);
+
+        // Logo panel
+        JPanel logoPanel = new JPanel();
+        logoPanel.setBackground(BACKGROUND_COLOR);
+        logoPanel.setBorder(new EmptyBorder(50, 0, 50, 0));
+
+        JLabel logoLabel = new JLabel("UNI EATS");
+        logoLabel.setFont(new Font("Segoe UI", Font.BOLD, 48));
+        logoLabel.setForeground(PRIMARY_COLOR);
+        logoPanel.add(logoLabel);
+
+        // Login form panel
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setBackground(BACKGROUND_COLOR);
+        formPanel.setBorder(new EmptyBorder(20, 300, 50, 300));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(10, 10, 10, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+
+        JLabel loginTitle = new JLabel("Welcome Back!", SwingConstants.CENTER);
+        loginTitle.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        loginTitle.setForeground(TEXT_COLOR);
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.gridwidth = 2;
+        formPanel.add(loginTitle, gbc);
+
+        JLabel usernameLabel = new JLabel("Username:");
+        usernameLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.gridwidth = 1;
+        formPanel.add(usernameLabel, gbc);
+
+        usernameField = new JTextField();
+        usernameField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        usernameField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)
+        ));
+        gbc.gridx = 1;
+        formPanel.add(usernameField, gbc);
+
+        JLabel passwordLabel = new JLabel("Password:");
+        passwordLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        formPanel.add(passwordLabel, gbc);
+
+        passwordField = new JPasswordField();
+        passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        passwordField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)
+        ));
+        gbc.gridx = 1;
+        formPanel.add(passwordField, gbc);
+
+        JButton loginButton = new JButton("Sign In");
+        styleButton(loginButton, PRIMARY_COLOR, Color.WHITE);
+        loginButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 2;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.CENTER;
+        formPanel.add(loginButton, gbc);
+
+        JLabel signupPrompt = new JLabel("Don't have an account? Sign up", SwingConstants.CENTER);
+        signupPrompt.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        signupPrompt.setForeground(PRIMARY_COLOR);
+        gbc.gridy = 4;
+        formPanel.add(signupPrompt, gbc);
+
+        loginButton.addActionListener(e -> {
+            String username = usernameField.getText();
+            String password = new String(passwordField.getPassword());
+
+            if (!username.isEmpty() && !password.isEmpty()) {
+                showMainMenu(username);
+            } else {
+                JOptionPane.showMessageDialog(frame,
+                        "Please enter both username and password",
+                        "Login Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        loginPanel.add(logoPanel, BorderLayout.NORTH);
+        loginPanel.add(formPanel, BorderLayout.CENTER);
+
+        frame.setContentPane(loginPanel);
+        frame.setVisible(true);
+    }
+
+    private void showMainMenu(String username) {
+        mainPanel = new JPanel(new BorderLayout());
+        mainPanel.setBackground(BACKGROUND_COLOR);
+
+        createHeader(username);
+        createMenuContent();
+        createItemDetailPanel();
+
+        frame.setContentPane(mainPanel);
+        frame.revalidate();
+        frame.repaint();
+    }
+
+    private void showOrdersScreen() {
+        ordersPanel = new JPanel(new BorderLayout());
+        ordersPanel.setBackground(BACKGROUND_COLOR);
+
+        createHeader(userGreetingLabel.getText().replace("Welcome, ", ""));
+
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.setBackground(BACKGROUND_COLOR);
+        contentPanel.setBorder(new EmptyBorder(50, 50, 50, 50));
+
+        JLabel ordersTitle = new JLabel("My Orders", SwingConstants.CENTER);
+        ordersTitle.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        ordersTitle.setForeground(TEXT_COLOR);
+        contentPanel.add(ordersTitle, BorderLayout.NORTH);
+
+        JLabel emptyLabel = new JLabel("No orders yet. Start ordering from the menu!", SwingConstants.CENTER);
+        emptyLabel.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+        emptyLabel.setForeground(SECONDARY_COLOR);
+        contentPanel.add(emptyLabel, BorderLayout.CENTER);
+
+        ordersPanel.add(headerPanel, BorderLayout.NORTH);
+        ordersPanel.add(contentPanel, BorderLayout.CENTER);
+
+        frame.setContentPane(ordersPanel);
+        frame.revalidate();
+        frame.repaint();
+    }
+
+    private void createHeader(String username) {
+        headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setBackground(PRIMARY_COLOR);
+        headerPanel.setBorder(new EmptyBorder(15, 30, 15, 30));
+
+        JLabel logoLabel = new JLabel("UNI EATS");
+        logoLabel.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        logoLabel.setForeground(Color.WHITE);
+
+        userGreetingLabel = new JLabel("Welcome, " + username);
+        userGreetingLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        userGreetingLabel.setForeground(Color.WHITE);
+
+        JPanel navPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 0));
+        navPanel.setOpaque(false);
+
+        JButton menuButton = new JButton("Menu");
+        styleButton(menuButton, Color.WHITE, PRIMARY_COLOR);
+        menuButton.addActionListener(e -> showMainMenu(username));
+
+        JButton ordersButton = new JButton("My Orders");
+        styleButton(ordersButton, Color.WHITE, PRIMARY_COLOR);
+        ordersButton.addActionListener(e -> showOrdersScreen());
+
+        JButton logoutButton = new JButton("Logout");
+        styleButton(logoutButton, Color.WHITE, PRIMARY_COLOR);
+        logoutButton.addActionListener(e -> {
+            usernameField.setText("");
+            passwordField.setText("");
+            showLoginScreen();
+        });
+
+        navPanel.add(menuButton);
+        navPanel.add(ordersButton);
+        navPanel.add(logoutButton);
+
+        headerPanel.add(logoLabel, BorderLayout.WEST);
+        headerPanel.add(userGreetingLabel, BorderLayout.CENTER);
+        headerPanel.add(navPanel, BorderLayout.EAST);
+
+        if (mainPanel != null) {
+            mainPanel.add(headerPanel, BorderLayout.NORTH);
+        }
+        if (ordersPanel != null) {
+            ordersPanel.add(headerPanel, BorderLayout.NORTH);
+        }
+    }
+
+    private void createMenuContent() {
+        JPanel contentPanel = new JPanel(new BorderLayout());
+        contentPanel.setBackground(BACKGROUND_COLOR);
+
+        JLabel menuTitle = new JLabel("Our Menu", SwingConstants.CENTER);
+        menuTitle.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        menuTitle.setForeground(TEXT_COLOR);
+        menuTitle.setBorder(new EmptyBorder(30, 0, 20, 0));
+        contentPanel.add(menuTitle, BorderLayout.NORTH);
+
+        JPanel itemsGrid = new JPanel(new GridLayout(2, 5, 10, 10));
+        itemsGrid.setBackground(BACKGROUND_COLOR);
+        itemsGrid.setBorder(new EmptyBorder(0, 30, 30, 30));
+
+        for (String key : foodItems.keySet()) {
+            FoodItem item = foodItems.get(key);
+            JPanel itemCard = createItemCard(item);
+            itemsGrid.add(itemCard);
+        }
+
+        JScrollPane scrollPane = new JScrollPane(itemsGrid);
+        scrollPane.setBorder(null);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
+
+        contentPanel.add(scrollPane, BorderLayout.CENTER);
+        mainPanel.add(contentPanel, BorderLayout.CENTER);
+    }
+
+    private JPanel createItemCard(FoodItem item) {
+        JPanel card = new JPanel(new BorderLayout());
+        card.setBackground(Color.WHITE);
+        card.setPreferredSize(new Dimension(175, 175));
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(10, 10, 10, 10)
+        ));
+        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+        // Image label
+        JLabel imageLabel = new JLabel();
+        imageLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        imageLabel.setPreferredSize(new Dimension(175, 125));
+
+        try {
+            InputStream imgStream = getClass().getResourceAsStream("/" + item.imagePath);
+            if (imgStream != null) {
+                ImageIcon originalIcon = new ImageIcon(ImageIO.read(imgStream));
+                Image scaledImage = originalIcon.getImage().getScaledInstance(
+                        175, 125, Image.SCALE_SMOOTH);
+                imageLabel.setIcon(new ImageIcon(scaledImage));
+            } else {
+                throw new IOException("Image not found: " + item.imagePath);
+            }
+        } catch (Exception e) {
+            imageLabel.setOpaque(true);
+            imageLabel.setBackground(SECONDARY_COLOR);
+            imageLabel.setText(item.name);
+            imageLabel.setForeground(TEXT_COLOR);
+            imageLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        }
+
+        // Item info
+        JPanel infoPanel = new JPanel();
+        infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+        infoPanel.setBackground(Color.WHITE);
+        infoPanel.setBorder(new EmptyBorder(10, 0, 0, 0));
+
+        JLabel nameLabel = new JLabel(item.name);
+        nameLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        nameLabel.setForeground(TEXT_COLOR);
+
+        JLabel priceLabel = new JLabel(String.format("$%.2f", item.price));
+        priceLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        priceLabel.setForeground(PRIMARY_COLOR);
+        priceLabel.setBorder(new EmptyBorder(5, 0, 0, 0));
+
+        infoPanel.add(nameLabel);
+        infoPanel.add(priceLabel);
+
+        card.add(imageLabel, BorderLayout.CENTER);
+        card.add(infoPanel, BorderLayout.SOUTH);
+
+        card.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                showItemDetails(item);
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                card.setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(PRIMARY_COLOR),
+                        BorderFactory.createEmptyBorder(10, 10, 10, 10)
+                ));
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                card.setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(SECONDARY_COLOR),
+                        BorderFactory.createEmptyBorder(10, 10, 10, 10)
+                ));
+            }
+        });
+
+        return card;
+    }
+
+    private void createItemDetailPanel() {
+        itemDetailPanel = new JPanel(new BorderLayout(10, 20));
+        itemDetailPanel.setPreferredSize(new Dimension(350, 0));
+        itemDetailPanel.setBorder(new EmptyBorder(30, 20, 30, 30));
+        itemDetailPanel.setBackground(new Color(245, 245, 245));
+        mainPanel.add(itemDetailPanel, BorderLayout.EAST);
+    }
+
+    private void showItemDetails(FoodItem item) {
+        currentlySelected = item;
+        itemDetailPanel.removeAll();
+        itemDetailPanel.setLayout(new BorderLayout(10, 20));
+
+        JPanel formPanel = new JPanel();
+        formPanel.setLayout(new BoxLayout(formPanel, BoxLayout.Y_AXIS));
+        formPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
+        formPanel.setBackground(new Color(245, 245, 245));
+
+        // Item name
+        JTextField nameField = new JTextField(item.name);
+        nameField.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        nameField.setForeground(TEXT_COLOR);
+        nameField.setAlignmentX(Component.CENTER_ALIGNMENT);
+        nameField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)
+        ));
+        nameField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                updateItemInDatabase(item, "name", nameField.getText());
+                item.name = nameField.getText();
+            }
+        });
+
+        // Item image
+        JLabel detailImageLabel = new JLabel();
+        detailImageLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        detailImageLabel.setPreferredSize(new Dimension(300, 200));
+        detailImageLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        try {
+            InputStream imgStream = getClass().getResourceAsStream("/" + item.imagePath);
+            if (imgStream != null) {
+                ImageIcon originalIcon = new ImageIcon(ImageIO.read(imgStream));
+                Image scaledImage = originalIcon.getImage().getScaledInstance(
+                        300, 200, Image.SCALE_SMOOTH);
+                detailImageLabel.setIcon(new ImageIcon(scaledImage));
+            } else {
+                throw new IOException("Image not found: " + item.imagePath);
+            }
+        } catch (Exception e) {
+            detailImageLabel.setOpaque(true);
+            detailImageLabel.setBackground(SECONDARY_COLOR);
+            detailImageLabel.setText(item.name);
+            detailImageLabel.setForeground(TEXT_COLOR);
+        }
+
+        // Description
+        JTextArea descriptionArea = new JTextArea(item.description);
+        descriptionArea.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        descriptionArea.setForeground(TEXT_COLOR);
+        descriptionArea.setLineWrap(true);
+        descriptionArea.setWrapStyleWord(true);
+        descriptionArea.setEditable(true);
+        descriptionArea.setBackground(Color.WHITE);
+        descriptionArea.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)
+        ));
+        descriptionArea.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                updateItemInDatabase(item, "description", descriptionArea.getText());
+                item.description = descriptionArea.getText();
+            }
+        });
+
+        // Price
+        JTextField priceField = new JTextField(String.format("%.2f", item.price));
+        priceField.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        priceField.setForeground(PRIMARY_COLOR);
+        priceField.setAlignmentX(Component.CENTER_ALIGNMENT);
+        priceField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(SECONDARY_COLOR),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)
+        ));
+        priceField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                try {
+                    double newPrice = Double.parseDouble(priceField.getText());
+                    updateItemInDatabase(item, "price", newPrice);
+                    item.price = newPrice;
+                } catch (NumberFormatException ex) {
+                    JOptionPane.showMessageDialog(frame,
+                            "Please enter a valid price",
+                            "Invalid Input",
+                            JOptionPane.ERROR_MESSAGE);
+                    priceField.setText(String.format("%.2f", item.price));
+                }
+            }
+        });
+
+        // Quantity management
+        JPanel quantityPanel = new JPanel();
+        quantityPanel.setBackground(new Color(245, 245, 245));
+        quantityPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel quantityLabel = new JLabel("Available Quantity:");
+        quantityLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        quantityPanel.add(quantityLabel);
+
+        SpinnerNumberModel spinnerModel = new SpinnerNumberModel(item.quantity, 0, 100, 1);
+        JSpinner quantitySpinner = new JSpinner(spinnerModel);
+        quantitySpinner.addChangeListener(e -> {
+            int newQuantity = (Integer) quantitySpinner.getValue();
+            updateItemInDatabase(item, "quantity", newQuantity);
+            item.quantity = newQuantity;
+        });
+        quantityPanel.add(quantitySpinner);
+
+        // Order quantity
+        JPanel orderQuantityPanel = new JPanel();
+        orderQuantityPanel.setBackground(new Color(245, 245, 245));
+        orderQuantityPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel orderLabel = new JLabel("Order Quantity:");
+        orderLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        orderQuantityPanel.add(orderLabel);
+
+        SpinnerNumberModel orderSpinnerModel = new SpinnerNumberModel(1, 1, item.quantity, 1);
+        JSpinner orderQuantitySpinner = new JSpinner(orderSpinnerModel);
+        orderQuantityPanel.add(orderQuantitySpinner);
+
+        // Add to cart button
+        JButton addToCartButton = new JButton("Add to Cart");
+        styleButton(addToCartButton, PRIMARY_COLOR, Color.WHITE);
+        addToCartButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        addToCartButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        addToCartButton.addActionListener(e -> {
+            int quantity = (Integer) orderQuantitySpinner.getValue();
+            if (quantity > item.quantity) {
+                JOptionPane.showMessageDialog(frame,
+                        "Not enough items in stock! Only " + item.quantity + " available.",
+                        "Insufficient Stock",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            
+            // Update quantity in database
+            int newQuantity = item.quantity - quantity;
+            updateItemInDatabase(item, "quantity", newQuantity);
+            item.quantity = newQuantity;
+            quantitySpinner.setValue(newQuantity);
+            orderSpinnerModel.setMaximum(newQuantity);
+            
+            JOptionPane.showMessageDialog(frame,
+                    String.format("Added %d %s to your cart", quantity, item.name),
+                    "Item Added",
+                    JOptionPane.INFORMATION_MESSAGE);
+        });
+
+        // Remove Item button
+        JButton removeButton = new JButton("Remove Item");
+        styleButton(removeButton, Color.RED, Color.WHITE);
+        removeButton.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        removeButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        removeButton.addActionListener(e -> removeItemFromDatabase(item));
+
+        formPanel.add(nameField);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(detailImageLabel);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(descriptionArea);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(priceField);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(quantityPanel);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(orderQuantityPanel);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 20)));
+        formPanel.add(addToCartButton);
+        formPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        formPanel.add(removeButton);
+
+        itemDetailPanel.add(formPanel, BorderLayout.NORTH);
+        itemDetailPanel.revalidate();
+        itemDetailPanel.repaint();
+    }
+
+    private void updateItemInDatabase(FoodItem item, String field, Object value) {
+        try {
+            String sql = "UPDATE menu_items SET " + field + " = ? WHERE name = ?";
+            PreparedStatement pstmt = connection.prepareStatement(sql);
+            
+            if (value instanceof String) {
+                pstmt.setString(1, (String) value);
+            } else if (value instanceof Double) {
+                pstmt.setDouble(1, (Double) value);
+            } else if (value instanceof Integer) {
+                pstmt.setInt(1, (Integer) value);
+            }
+            
+            pstmt.setString(2, item.name);
+            int rowsAffected = pstmt.executeUpdate();
+            
+            if (rowsAffected == 0) {
+                System.err.println("No rows affected when updating " + field + " for " + item.name);
+            }
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(frame,
+                    "Failed to update item in database: " + e.getMessage(),
+                    "Database Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void removeItemFromDatabase(FoodItem item) {
+        int confirm = JOptionPane.showConfirmDialog(frame,
+                "Are you sure you want to remove this item from the menu?",
+                "Confirm Removal",
+                JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            try {
+                PreparedStatement pstmt = connection.prepareStatement(
+                        "DELETE FROM menu_items WHERE name = ?"
+                );
+                pstmt.setString(1, item.name);
+                int rowsAffected = pstmt.executeUpdate();
+
+                if (rowsAffected > 0) {
+                    String keyToRemove = null;
+                    for (Map.Entry<String, FoodItem> entry : foodItems.entrySet()) {
+                        if (entry.getValue() == item) {
+                            keyToRemove = entry.getKey();
+                            break;
+                        }
+                    }
+
+                    if (keyToRemove != null) {
+                        foodItems.remove(keyToRemove);
+                        JOptionPane.showMessageDialog(frame,
+                                "Item removed successfully!",
+                                "Success",
+                                JOptionPane.INFORMATION_MESSAGE);
+
+                        itemDetailPanel.removeAll();
+                        itemDetailPanel.revalidate();
+                        itemDetailPanel.repaint();
+                        showMainMenu(userGreetingLabel.getText().replace("Welcome, ", ""));
+                    }
+                }
+            } catch (SQLException ex) {
+                JOptionPane.showMessageDialog(frame,
+                        "Failed to remove item from database: " + ex.getMessage(),
+                        "Database Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void styleButton(JButton button, Color bgColor, Color textColor) {
+        button.setBackground(bgColor);
+        button.setForeground(textColor);
+        button.setFocusPainted(false);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(bgColor.darker()),
+                BorderFactory.createEmptyBorder(8, 15, 8, 15)
+        ));
+
+        button.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                button.setBackground(bgColor.brighter());
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                button.setBackground(bgColor);
+            }
+        });
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new UniEatsCafeSystem());
+    }
+
+    private class FoodItem {
+        String name;
+        String description;
+        double price;
+        int quantity;
+        String imagePath;
+
+        public FoodItem(String name, String description, double price, int quantity, String imagePath) {
+            this.name = name;
+            this.description = description;
+            this.price = price;
+            this.quantity = quantity;
+            this.imagePath = imagePath;
+        }
+    }
+}
